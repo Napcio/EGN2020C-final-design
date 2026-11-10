@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <LiquidCrystal.h>
+#include <templates.h>
 
 enum class State
 {
@@ -37,8 +38,12 @@ LiquidCrystal lcd(pin::lcdRegSel, pin::lcdEnable,
 
 constexpr uint8_t LCD_WIDTH = 16;
 // ms conversions
-constexpr uint16_t HOUR = 3600000;
-constexpr uint16_t MINUTE = 60000;
+constexpr int HOUR = 3600000;
+constexpr int MINUTE = 60000;
+
+void handleSetMenu(bool nav, bool sel);
+SetMenuIndex nextMenuIndex(SetMenuIndex current);
+bool checkButtonPress(uint8_t pin);
 
 State currentState = State::Idle;
 unsigned long alarmSetTime = 0;
@@ -55,12 +60,14 @@ void setup()
     pinMode(pin::distEcho, INPUT);
 
     lcd.begin(16, 2);
-    
 }
 
 void loop() 
 {
+    bool navButtonTrig = checkButtonPress<pin::buttonNav>();
+    bool selButtonTrig = checkButtonPress<pin::buttonSel>();
 
+    // Handle bouncing
     switch (currentState)
     {
         case State::Idle:
@@ -69,6 +76,10 @@ void loop()
             lcd.print("ALARM IDLE");
             lcd.setCursor(0, 1);
             lcd.print("N:Set  S:UsePrev");
+            if (navButtonTrig)
+                currentState = State::AlarmSet;
+            if (selButtonTrig)
+                currentState = State::AlarmActive;
             break;
         }  
         case State::AlarmSet:
@@ -76,15 +87,7 @@ void loop()
             lcd.cursor();
             lcd.blink();
 
-            lcd.setCursor(0,0);
-            int hours = (alarmDuration / 3600000) % 24;
-            int minutes = (alarmDuration / 60000) % 60;
-            char buffer[LCD_WIDTH];
-            snprintf(buffer, sizeof(buffer), "%-02dh:%-02dm Back Set", hours, minutes);
-            lcd.print(buffer);
-
-            lcd.setCursor(0,1);
-            lcd.print("N:Move  S:Action");
+            handleSetMenu(navButtonTrig, selButtonTrig); // TODO: add inputs
         }  
         case State::AlarmActive:
         {
@@ -111,33 +114,63 @@ void cancelAlarm()
     currentState = State::Idle;
 }
 
+SetMenuIndex nextMenuIndex(SetMenuIndex current)
+{
+    return static_cast<SetMenuIndex>((static_cast<int>(current) + 1) % sizeof(SetMenuIndex));
+}
 
 void handleSetMenu(bool nav, bool sel)
 {
+    uint8_t hours = (alarmDuration / HOUR);
+    uint8_t minutes = (alarmDuration / MINUTE) % 60;
+
+    lcd.setCursor(0,0);
+    char buffer[LCD_WIDTH];
+    snprintf(buffer, sizeof(buffer), "%-02dh:%-02dm Back Set", hours, minutes);
+    lcd.print(buffer);
+
+    lcd.setCursor(0,1);
+    lcd.print("N:Move  S:Action");
+
+    if (nav)
+        currentMenuItem = nextMenuIndex(currentMenuItem);
+        
     switch (currentMenuItem)
     {
         case SetMenuIndex::Hour:
         {
             lcd.setCursor(0, 0);
-            // Add 5 minutes
+            // Add 1 hour
             if (sel)
-                alarmDuration = (alarmDuration + ) % 60;
+            {
+                hours = (hours + 1) % 24;
+                alarmDuration = hours * HOUR + minutes * MINUTE;
+            }
             break;
         }
         case SetMenuIndex::Minute:
         {
             lcd.setCursor(4, 0);
-            // 
+            // Add 5 minutes
+            if (sel)
+            {
+                minutes = (minutes + 5) % 60;
+                alarmDuration = hours * HOUR + minutes * MINUTE;
+            }
             break;
         }
         case SetMenuIndex::Back:
         {
             lcd.setCursor(8, 0);
+            currentState = State::Idle;
+            lcd.noCursor();
             break;
         }
         case SetMenuIndex::Set:
         {
             lcd.setCursor(13, 0);
+            currentState = State::AlarmActive;
+            lcd.noCursor();
             break;
         }
     }
