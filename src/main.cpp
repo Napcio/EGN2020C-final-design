@@ -2,7 +2,7 @@
 #include <LiquidCrystal.h>
 #include <templates.h>
 
-enum class State
+enum class Mode
 {
     Idle,
     AlarmSet,
@@ -15,7 +15,8 @@ enum class SetMenuIndex
     Hour,
     Minute,
     Back,
-    Set
+    Set,
+    Count // Sentinel value, do not use
 };
 
 namespace pin
@@ -38,20 +39,26 @@ LiquidCrystal lcd(pin::lcdRegSel, pin::lcdEnable,
 
 constexpr uint8_t LCD_WIDTH = 16;
 // ms conversions
-constexpr int HOUR = 3600000;
-constexpr int MINUTE = 60000;
+constexpr uint32_t HOUR = 3600000;
+constexpr uint16_t MINUTE = 60000;
 
+// Functions
 void handleSetMenu(bool nav, bool sel);
 SetMenuIndex nextMenuIndex(SetMenuIndex current);
 bool checkButtonPress(uint8_t pin);
+void updateMode(Mode newMode);
 
-State currentState = State::Idle;
+// State
+Mode currentMode = Mode::Idle;
+bool systemUpdate = true;
 unsigned long alarmSetTime = 0;
 unsigned long alarmDuration = 0;
 SetMenuIndex currentMenuItem = SetMenuIndex::Hour;
 
 void setup() 
 {
+    Serial.begin(9600);
+    
     pinMode(pin::motorLeft, OUTPUT);
     pinMode(pin::motorRight, OUTPUT);
     pinMode(pin::buttonSel, INPUT);
@@ -67,33 +74,43 @@ void loop()
     bool navButtonTrig = checkButtonPress<pin::buttonNav>();
     bool selButtonTrig = checkButtonPress<pin::buttonSel>();
 
-    // Handle bouncing
-    switch (currentState)
+    if (navButtonTrig || selButtonTrig)
+        systemUpdate = true;
+
+    if (!systemUpdate)
+        return;
+    systemUpdate = false;
+
+    lcd.clear();
+    lcd.noCursor();
+    
+    switch (currentMode)
     {
-        case State::Idle:
+        case Mode::Idle:
         {   
             lcd.setCursor(0, 0);
             lcd.print("ALARM IDLE");
             lcd.setCursor(0, 1);
             lcd.print("N:Set  S:UsePrev");
             if (navButtonTrig)
-                currentState = State::AlarmSet;
+                updateMode(Mode::AlarmSet);
             if (selButtonTrig)
-                currentState = State::AlarmActive;
+                updateMode(Mode::AlarmActive);
             break;
         }  
-        case State::AlarmSet:
+        case Mode::AlarmSet:
         {
             lcd.cursor();
-            lcd.blink();
 
-            handleSetMenu(navButtonTrig, selButtonTrig); // TODO: add inputs
+            handleSetMenu(navButtonTrig, selButtonTrig);
+            break;
         }  
-        case State::AlarmActive:
+        case Mode::AlarmActive:
         {
+            lcd.print("ALARM ACTIVE");
             break;
         }
-        case State::AlarmRing:
+        case Mode::AlarmRing:
         {
             break;
         }
@@ -104,19 +121,19 @@ void setAlarm(unsigned long duration)
 {
     alarmSetTime = millis();
     alarmDuration = duration;
-    currentState = State::AlarmSet;
+    currentMode = Mode::AlarmSet;
 }
 
 void cancelAlarm()
 {
     alarmSetTime = 0;
     // Alarm duration remains unchanged to reuse on next open
-    currentState = State::Idle;
+    currentMode = Mode::Idle;
 }
 
 SetMenuIndex nextMenuIndex(SetMenuIndex current)
 {
-    return static_cast<SetMenuIndex>((static_cast<int>(current) + 1) % sizeof(SetMenuIndex));
+    return static_cast<SetMenuIndex>((static_cast<int>(current) + 1) % static_cast<int>(SetMenuIndex::Count));
 }
 
 void handleSetMenu(bool nav, bool sel)
@@ -125,8 +142,8 @@ void handleSetMenu(bool nav, bool sel)
     uint8_t minutes = (alarmDuration / MINUTE) % 60;
 
     lcd.setCursor(0,0);
-    char buffer[LCD_WIDTH];
-    snprintf(buffer, sizeof(buffer), "%-02dh:%-02dm Back Set", hours, minutes);
+    char buffer[LCD_WIDTH + 1];
+    snprintf(buffer, sizeof(buffer), "%02dh:%02dm Back Set", hours, minutes);
     lcd.print(buffer);
 
     lcd.setCursor(0,1);
@@ -144,7 +161,8 @@ void handleSetMenu(bool nav, bool sel)
             if (sel)
             {
                 hours = (hours + 1) % 24;
-                alarmDuration = hours * HOUR + minutes * MINUTE;
+                alarmDuration = hours * HOUR + minutes * 1UL * MINUTE;
+                systemUpdate = true;
             }
             break;
         }
@@ -155,23 +173,30 @@ void handleSetMenu(bool nav, bool sel)
             if (sel)
             {
                 minutes = (minutes + 5) % 60;
-                alarmDuration = hours * HOUR + minutes * MINUTE;
+                alarmDuration = hours * HOUR + minutes * 1UL * MINUTE;
+                systemUpdate = true;
             }
             break;
         }
         case SetMenuIndex::Back:
         {
             lcd.setCursor(8, 0);
-            currentState = State::Idle;
-            lcd.noCursor();
+            if (sel)
+                updateMode(Mode::Idle);
             break;
         }
         case SetMenuIndex::Set:
         {
             lcd.setCursor(13, 0);
-            currentState = State::AlarmActive;
-            lcd.noCursor();
+            if (sel)
+                updateMode(Mode::Idle);
             break;
         }
     }
+}
+
+void updateMode(Mode newMode)
+{
+    systemUpdate = true;
+    currentMode = newMode;
 }
