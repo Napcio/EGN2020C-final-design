@@ -2,23 +2,7 @@
 #include <LiquidCrystal.h>
 #include <templates.h>
 
-enum class Mode
-{
-    Idle,
-    AlarmSet,
-    AlarmActive,
-    AlarmRing
-};
-
-enum class SetMenuIndex
-{
-    Hour,
-    Minute,
-    Back,
-    Set,
-    Count // Sentinel value, do not use
-};
-
+// Global Values
 namespace pin
 {
     constexpr uint8_t motorLeft = 13;
@@ -37,10 +21,53 @@ namespace pin
 LiquidCrystal lcd(pin::lcdRegSel, pin::lcdEnable,
                   pin::lcdDb4, pin::lcdDb5, pin::lcdDb6, pin::lcdDb7);
 
+
 constexpr uint8_t LCD_WIDTH = 16;
 // ms conversions
 constexpr uint32_t HOUR = 3600000;
 constexpr uint16_t MINUTE = 60000;
+constexpr uint16_t SECOND = 1000;
+
+// Classes
+enum class Mode
+{
+    Idle,
+    SetMenu,
+    AlarmSet,
+    AlarmActive
+};
+
+enum class SetMenuIndex
+{
+    Hour,
+    Minute,
+    Back,
+    Set,
+    Count // Sentinel value, do not use
+};
+
+struct Time
+{
+    static constexpr uint32_t HOUR = 3600000;
+    static constexpr uint16_t MINUTE = 60000;
+    static constexpr uint16_t SECOND = 1000;
+
+    uint8_t hours;
+    uint8_t minutes;
+    uint8_t seconds;
+
+    Time(unsigned long timeMs)
+    {
+        hours = (timeMs / HOUR);
+        minutes = (timeMs / MINUTE) % 60;
+        seconds = (timeMs / SECOND) % 60;
+    }
+
+    unsigned long toMs()
+    {
+        return hours * HOUR + minutes * 1UL * MINUTE + seconds * 1UL * SECOND;
+    }
+};
 
 // Functions
 void handleSetMenu(bool nav, bool sel);
@@ -74,7 +101,9 @@ void loop()
     bool navButtonTrig = checkButtonPress<pin::buttonNav>();
     bool selButtonTrig = checkButtonPress<pin::buttonSel>();
 
-    if (navButtonTrig || selButtonTrig)
+    if ((navButtonTrig || selButtonTrig) ||                             // Update on button press
+       ( currentMode == Mode::AlarmSet && millis() % Time::SECOND == 0) // Update every second when alarm set
+    )
         systemUpdate = true;
 
     if (!systemUpdate)
@@ -82,35 +111,54 @@ void loop()
     systemUpdate = false;
 
     lcd.clear();
-    lcd.noCursor();
+    lcd.setCursor(0, 0);
     
     switch (currentMode)
     {
         case Mode::Idle:
         {   
-            lcd.setCursor(0, 0);
+            // Screen updates
             lcd.print("ALARM IDLE");
             lcd.setCursor(0, 1);
             lcd.print("N:Set  S:UsePrev");
+
+            // Interactions
             if (navButtonTrig)
-                updateMode(Mode::AlarmSet);
+                updateMode(Mode::SetMenu);
             if (selButtonTrig)
-                updateMode(Mode::AlarmActive);
+                updateMode(Mode::AlarmSet);
+            break;
+        }  
+        case Mode::SetMenu:
+        {
+            handleSetMenu(navButtonTrig, selButtonTrig);
             break;
         }  
         case Mode::AlarmSet:
         {
-            lcd.cursor();
+            Time timeLeft(alarmSetTime + alarmDuration - millis());
+            
+            // Screen updates
+            char buffer[LCD_WIDTH + 1];
+            snprintf(buffer, sizeof(buffer), "Time %02dh:%02dm:%02ds", timeLeft.hours, timeLeft.minutes, timeLeft.seconds);
+            lcd.print(buffer);
+            lcd.setCursor(0, 2);
+            lcd.print("N:+5m  S:Cancel");
 
-            handleSetMenu(navButtonTrig, selButtonTrig);
-            break;
-        }  
-        case Mode::AlarmActive:
-        {
-            lcd.print("ALARM ACTIVE");
+            // Interactions
+            if (navButtonTrig)
+            {
+                alarmDuration += 5 * 1UL * Time::MINUTE;
+                systemUpdate = true;
+            } 
+            if (selButtonTrig)
+            {
+                updateMode(Mode::Idle);
+                systemUpdate = true;
+            }  
             break;
         }
-        case Mode::AlarmRing:
+        case Mode::AlarmActive:
         {
             break;
         }
@@ -121,7 +169,7 @@ void setAlarm(unsigned long duration)
 {
     alarmSetTime = millis();
     alarmDuration = duration;
-    currentMode = Mode::AlarmSet;
+    updateMode(Mode::AlarmSet);
 }
 
 void cancelAlarm()
@@ -138,17 +186,17 @@ SetMenuIndex nextMenuIndex(SetMenuIndex current)
 
 void handleSetMenu(bool nav, bool sel)
 {
-    uint8_t hours = (alarmDuration / HOUR);
-    uint8_t minutes = (alarmDuration / MINUTE) % 60;
+    Time currentDuration(alarmDuration);
 
-    lcd.setCursor(0,0);
+    // Screen updates
     char buffer[LCD_WIDTH + 1];
-    snprintf(buffer, sizeof(buffer), "%02dh:%02dm Back Set", hours, minutes);
+    snprintf(buffer, sizeof(buffer), "%02dh:%02dm Back Set", currentDuration.hours, currentDuration.minutes);
     lcd.print(buffer);
 
     lcd.setCursor(0,1);
     lcd.print("N:Move  S:Action");
 
+    // Interactions
     if (nav)
         currentMenuItem = nextMenuIndex(currentMenuItem);
         
@@ -160,8 +208,8 @@ void handleSetMenu(bool nav, bool sel)
             // Add 1 hour
             if (sel)
             {
-                hours = (hours + 1) % 24;
-                alarmDuration = hours * HOUR + minutes * 1UL * MINUTE;
+                currentDuration.hours = (currentDuration.hours + 1) % 24;
+                alarmDuration = currentDuration.toMs();
                 systemUpdate = true;
             }
             break;
@@ -172,8 +220,8 @@ void handleSetMenu(bool nav, bool sel)
             // Add 5 minutes
             if (sel)
             {
-                minutes = (minutes + 5) % 60;
-                alarmDuration = hours * HOUR + minutes * 1UL * MINUTE;
+                currentDuration.minutes = (currentDuration.minutes + 5) % 60;
+                alarmDuration = currentDuration.toMs();
                 systemUpdate = true;
             }
             break;
@@ -189,7 +237,12 @@ void handleSetMenu(bool nav, bool sel)
         {
             lcd.setCursor(13, 0);
             if (sel)
-                updateMode(Mode::Idle);
+                setAlarm(alarmDuration);
+            break;
+        }
+        case SetMenuIndex::Count:
+        {
+            Serial.write("Control reached invalid switch case.");
             break;
         }
     }
@@ -197,6 +250,12 @@ void handleSetMenu(bool nav, bool sel)
 
 void updateMode(Mode newMode)
 {
+    // Mode-specific system changes
+    if (newMode == Mode::SetMenu)
+        lcd.cursor();
+    if (currentMode == Mode::SetMenu)
+        lcd.noCursor();
+
     systemUpdate = true;
     currentMode = newMode;
 }
