@@ -80,6 +80,7 @@ Mode currentMode = Mode::Idle;
 bool systemUpdate = true;
 unsigned long alarmSetTime = 0;
 unsigned long alarmDuration = 0;
+unsigned long alarmExtraDuration = 0; // For snooze and time adding functionality, without compromising original alarm duration value
 SetMenuIndex currentMenuItem = SetMenuIndex::Hour;
 
 void setup() 
@@ -136,30 +137,44 @@ void loop()
         }  
         case Mode::AlarmSet:
         {
-            Time timeLeft(alarmSetTime + alarmDuration - millis());
+            const long alarmEndTime = alarmSetTime + alarmDuration + alarmExtraDuration;
+
+            if (millis() > alarmEndTime)
+                updateMode(Mode::AlarmActive);
+            
+            Time timeLeft(alarmEndTime - millis());
             
             // Screen updates
             char buffer[LCD_WIDTH + 1];
             snprintf(buffer, sizeof(buffer), "Time %02dh:%02dm:%02ds", timeLeft.hours, timeLeft.minutes, timeLeft.seconds);
             lcd.print(buffer);
             lcd.setCursor(0, 2);
-            lcd.print("N:+5m  S:Cancel");
+            lcd.print("N:+5m   S:Cancel");
 
             // Interactions
             if (navButtonTrig)
             {
-                alarmDuration += 5 * 1UL * Time::MINUTE;
+                alarmExtraDuration += 5 * 1UL * Time::MINUTE;
                 systemUpdate = true;
             } 
             if (selButtonTrig)
             {
                 updateMode(Mode::Idle);
-                systemUpdate = true;
             }  
             break;
         }
         case Mode::AlarmActive:
         {
+            const long alarmEndTime = alarmSetTime + alarmDuration + alarmExtraDuration;
+
+            lcd.print("ALARM EXPIRED");
+            lcd.setCursor(0, 2);
+            lcd.print("N:+5m  S:Dismiss");
+            // if (navButtonTrig)
+            // {
+            //     alarmSetTime -= millis() - alarmEndTime;
+            //     alr
+            // }
             break;
         }
     }
@@ -170,13 +185,6 @@ void setAlarm(unsigned long duration)
     alarmSetTime = millis();
     alarmDuration = duration;
     updateMode(Mode::AlarmSet);
-}
-
-void cancelAlarm()
-{
-    alarmSetTime = 0;
-    // Alarm duration remains unchanged to reuse on next open
-    currentMode = Mode::Idle;
 }
 
 SetMenuIndex nextMenuIndex(SetMenuIndex current)
@@ -217,10 +225,10 @@ void handleSetMenu(bool nav, bool sel)
         case SetMenuIndex::Minute:
         {
             lcd.setCursor(4, 0);
-            // Add 5 minutes
+            // Add 1 minute. For normal operation, may be better for this to be set to 5.
             if (sel)
             {
-                currentDuration.minutes = (currentDuration.minutes + 5) % 60;
+                currentDuration.minutes = (currentDuration.minutes + 1) % 60;
                 alarmDuration = currentDuration.toMs();
                 systemUpdate = true;
             }
@@ -255,6 +263,8 @@ void updateMode(Mode newMode)
         lcd.cursor();
     if (currentMode == Mode::SetMenu)
         lcd.noCursor();
+    if (currentMode == Mode::AlarmSet)
+        alarmSetTime = 0;
 
     systemUpdate = true;
     currentMode = newMode;
