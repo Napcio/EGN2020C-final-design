@@ -23,10 +23,6 @@ LiquidCrystal lcd(pin::lcdRegSel, pin::lcdEnable,
 
 
 constexpr uint8_t LCD_WIDTH = 16;
-// ms conversions
-constexpr uint32_t HOUR = 3600000;
-constexpr uint16_t MINUTE = 60000;
-constexpr uint16_t SECOND = 1000;
 
 // Classes
 enum class Mode
@@ -49,7 +45,7 @@ enum class SetMenuIndex
 struct Time
 {
     static constexpr uint32_t HOUR = 3600000;
-    static constexpr uint16_t MINUTE = 60000;
+    static constexpr uint16_t MINUTE = 60000; // During addition, multiply by 1UL to avoid overflow
     static constexpr uint16_t SECOND = 1000;
 
     uint8_t hours;
@@ -74,13 +70,14 @@ void handleSetMenu(bool nav, bool sel);
 SetMenuIndex nextMenuIndex(SetMenuIndex current);
 bool checkButtonPress(uint8_t pin);
 void updateMode(Mode newMode);
+void setAlarm(unsigned long duration);
 
 // State
 Mode currentMode = Mode::Idle;
 bool systemUpdate = true;
 unsigned long alarmSetTime = 0;
+unsigned long alarmPrevSetDuration = 0;
 unsigned long alarmDuration = 0;
-unsigned long alarmExtraDuration = 0; // For snooze and time adding functionality, without compromising original alarm duration value
 SetMenuIndex currentMenuItem = SetMenuIndex::Hour;
 
 void setup() 
@@ -125,9 +122,16 @@ void loop()
 
             // Interactions
             if (navButtonTrig)
+            {
+                currentMenuItem = SetMenuIndex::Hour;
                 updateMode(Mode::SetMenu);
+            }
             if (selButtonTrig)
-                updateMode(Mode::AlarmSet);
+            {
+                alarmDuration = alarmPrevSetDuration;
+                currentMenuItem = SetMenuIndex::Set;
+                updateMode(Mode::SetMenu);
+            }
             break;
         }  
         case Mode::SetMenu:
@@ -137,7 +141,7 @@ void loop()
         }  
         case Mode::AlarmSet:
         {
-            const long alarmEndTime = alarmSetTime + alarmDuration + alarmExtraDuration;
+            const unsigned long alarmEndTime = alarmSetTime + alarmDuration;
 
             if (millis() > alarmEndTime)
                 updateMode(Mode::AlarmActive);
@@ -154,8 +158,7 @@ void loop()
             // Interactions
             if (navButtonTrig)
             {
-                alarmExtraDuration += 5 * 1UL * Time::MINUTE;
-                systemUpdate = true;
+                alarmDuration += Time::MINUTE * 1UL * 5;
             } 
             if (selButtonTrig)
             {
@@ -165,16 +168,17 @@ void loop()
         }
         case Mode::AlarmActive:
         {
-            const long alarmEndTime = alarmSetTime + alarmDuration + alarmExtraDuration;
-
             lcd.print("ALARM EXPIRED");
             lcd.setCursor(0, 2);
             lcd.print("N:+5m  S:Dismiss");
-            // if (navButtonTrig)
-            // {
-            //     alarmSetTime -= millis() - alarmEndTime;
-            //     alr
-            // }
+            if (navButtonTrig)
+            {
+                setAlarm(Time::MINUTE * 1UL * 5);
+            }
+            if (selButtonTrig)
+            {
+                updateMode(Mode::Idle);
+            }
             break;
         }
     }
@@ -238,14 +242,20 @@ void handleSetMenu(bool nav, bool sel)
         {
             lcd.setCursor(8, 0);
             if (sel)
+            {
+                alarmDuration = 0;
                 updateMode(Mode::Idle);
+            }
             break;
         }
         case SetMenuIndex::Set:
         {
             lcd.setCursor(13, 0);
             if (sel)
+            {
+                alarmPrevSetDuration = alarmDuration;
                 setAlarm(alarmDuration);
+            }
             break;
         }
         case SetMenuIndex::Count:
@@ -260,12 +270,14 @@ void updateMode(Mode newMode)
 {
     // Mode-specific system changes
     if (newMode == Mode::SetMenu)
+    {
         lcd.cursor();
+    }
     if (currentMode == Mode::SetMenu)
         lcd.noCursor();
     if (currentMode == Mode::AlarmSet)
         alarmSetTime = 0;
-
+    
     systemUpdate = true;
     currentMode = newMode;
 }
