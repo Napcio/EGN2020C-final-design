@@ -5,22 +5,21 @@
 // Global Values
 namespace pin
 {
-    // Motor configurations are untested and probably wrong
-    constexpr uint8_t motorLeftForward     = 2;
-    constexpr uint8_t motorLeftReverse     = 3;
-    constexpr uint8_t motorRightForward    = 4;
-    constexpr uint8_t motorRightReverse    = 5;
-    constexpr uint8_t lcdEnable     = A4;
-    constexpr uint8_t lcdRegSel     = A5;
-    constexpr uint8_t lcdDb4        = A0;
-    constexpr uint8_t lcdDb5        = A1;
-    constexpr uint8_t lcdDb6        = A2;
-    constexpr uint8_t lcdDb7        = A3;
-    constexpr uint8_t buttonSel     = 12;
-    constexpr uint8_t buttonNav     = 11;
-    constexpr uint8_t distTrig      = 10;
-    constexpr uint8_t distEcho      = 9;
-    constexpr uint8_t buzzer        = 7;
+    constexpr uint8_t motorLeftForward   = 22;  // IN1
+    constexpr uint8_t motorLeftReverse   = 23;  // IN2
+    constexpr uint8_t motorRightForward  = 24;  // IN3
+    constexpr uint8_t motorRightReverse  = 25;  // IN4
+    constexpr uint8_t buttonSel = 9;
+    constexpr uint8_t buttonNav = 8;
+    constexpr uint8_t lcdRegSel = 12;
+    constexpr uint8_t lcdEnable = 11;
+    constexpr uint8_t lcdDb4    = 5;
+    constexpr uint8_t lcdDb5    = 4;
+    constexpr uint8_t lcdDb6    = 3;
+    constexpr uint8_t lcdDb7    = 2;
+    constexpr uint8_t distTrig = 30;
+    constexpr uint8_t distEcho = 31;
+    constexpr uint8_t buzzer = 7;
 }
 LiquidCrystal lcd(pin::lcdRegSel, pin::lcdEnable,
                   pin::lcdDb4, pin::lcdDb5, pin::lcdDb6, pin::lcdDb7);
@@ -102,6 +101,12 @@ void setup()
     pinMode(pin::buttonNav, INPUT);
     pinMode(pin::distTrig, OUTPUT);
     pinMode(pin::distEcho, INPUT);
+
+    // Set motors to max speed (eq to vcc)
+    // pinMode(pin::motorLeftEnable, OUTPUT);
+    // pinMode(pin::motorRightEnable, OUTPUT);
+    // digitalWrite(pin::motorLeftEnable, HIGH);
+    // digitalWrite(pin::motorRightEnable, HIGH);
 
     lcd.begin(16, 2);
 }
