@@ -5,24 +5,25 @@
 // Global Values
 namespace pin
 {
-    constexpr uint8_t motorLeft = 13;
-    constexpr uint8_t motorRight = 7;
-    constexpr uint8_t lcdEnable = 8;
-    constexpr uint8_t lcdRegSel = 6;
-    constexpr uint8_t lcdDb4 = 2;
-    constexpr uint8_t lcdDb5 = 3;
-    constexpr uint8_t lcdDb6 = 4;
-    constexpr uint8_t lcdDb7 = 5;
-    constexpr uint8_t buttonSel = 12;
-    constexpr uint8_t buttonNav = 11;
-    constexpr uint8_t distTrig = 10;
-    constexpr uint8_t distEcho = 9;
+    // Motor configurations are untested and probably wrong
+    constexpr uint8_t motorLeftForward     = 2;
+    constexpr uint8_t motorLeftReverse     = 3;
+    constexpr uint8_t motorRightForward    = 4;
+    constexpr uint8_t motorRightReverse    = 5;
+    constexpr uint8_t lcdEnable     = A4;
+    constexpr uint8_t lcdRegSel     = A5;
+    constexpr uint8_t lcdDb4        = A0;
+    constexpr uint8_t lcdDb5        = A1;
+    constexpr uint8_t lcdDb6        = A2;
+    constexpr uint8_t lcdDb7        = A3;
+    constexpr uint8_t buttonSel     = 12;
+    constexpr uint8_t buttonNav     = 11;
+    constexpr uint8_t distTrig      = 10;
+    constexpr uint8_t distEcho      = 9;
+    constexpr uint8_t buzzer        = 7;
 }
 LiquidCrystal lcd(pin::lcdRegSel, pin::lcdEnable,
                   pin::lcdDb4, pin::lcdDb5, pin::lcdDb6, pin::lcdDb7);
-
-
-constexpr uint8_t LCD_WIDTH = 16;
 
 // Classes
 enum class Mode
@@ -33,7 +34,7 @@ enum class Mode
     AlarmActive
 };
 
-enum class SetMenuIndex
+enum class SetMenuOption
 {
     Hour,
     Minute,
@@ -67,25 +68,36 @@ struct Time
 
 // Functions
 void handleSetMenu(bool nav, bool sel);
-SetMenuIndex nextMenuIndex(SetMenuIndex current);
+SetMenuOption nextMenuIndex(SetMenuOption current);
 bool checkButtonPress(uint8_t pin);
 void updateMode(Mode newMode);
 void setAlarm(unsigned long duration);
+int readUltrasonicDistanceCm(int triggerPin, int echoPin);
+void drivingLoop();
+
+// Constants
+constexpr uint8_t LCD_WIDTH = 16;
+constexpr uint8_t DANGER_DIST = 45; // Distance in cm before the vehicle should avoid an object 
+constexpr uint8_t STUCK_DIST = 15; // Distance in cm before the vehicle should back up
+constexpr uint16_t REVERSAL_TIME = 3 * Time::SECOND; // Time in seconds to reverse for when the vehicle is stuck
 
 // State
 Mode currentMode = Mode::Idle;
+SetMenuOption currentSetMenuOption = SetMenuOption::Hour;
 bool systemUpdate = true;
 unsigned long alarmSetTime = 0;
 unsigned long alarmPrevSetDuration = 0;
 unsigned long alarmDuration = 0;
-SetMenuIndex currentMenuItem = SetMenuIndex::Hour;
+uint16_t reversalClock = 0;
 
 void setup() 
 {
     Serial.begin(9600);
     
-    pinMode(pin::motorLeft, OUTPUT);
-    pinMode(pin::motorRight, OUTPUT);
+    pinMode(pin::motorLeftForward, OUTPUT);
+    pinMode(pin::motorLeftReverse, OUTPUT);
+    pinMode(pin::motorRightForward, OUTPUT);
+    pinMode(pin::motorRightReverse, OUTPUT);
     pinMode(pin::buttonSel, INPUT);
     pinMode(pin::buttonNav, INPUT);
     pinMode(pin::distTrig, OUTPUT);
@@ -98,6 +110,9 @@ void loop()
 {
     bool navButtonTrig = checkButtonPress<pin::buttonNav>();
     bool selButtonTrig = checkButtonPress<pin::buttonSel>();
+
+    if (currentMode == Mode::AlarmActive)
+        drivingLoop(); // Runs regardless of systemUpdate status
 
     if ((navButtonTrig || selButtonTrig) ||                             // Update on button press
        ( currentMode == Mode::AlarmSet && millis() % Time::SECOND == 0) // Update every second when alarm set
@@ -123,13 +138,13 @@ void loop()
             // Interactions
             if (navButtonTrig)
             {
-                currentMenuItem = SetMenuIndex::Hour;
+                currentSetMenuOption = SetMenuOption::Hour;
                 updateMode(Mode::SetMenu);
             }
             if (selButtonTrig)
             {
                 alarmDuration = alarmPrevSetDuration;
-                currentMenuItem = SetMenuIndex::Set;
+                currentSetMenuOption = SetMenuOption::Set;
                 updateMode(Mode::SetMenu);
             }
             break;
@@ -184,16 +199,9 @@ void loop()
     }
 }
 
-void setAlarm(unsigned long duration)
+SetMenuOption nextMenuIndex(SetMenuOption current)
 {
-    alarmSetTime = millis();
-    alarmDuration = duration;
-    updateMode(Mode::AlarmSet);
-}
-
-SetMenuIndex nextMenuIndex(SetMenuIndex current)
-{
-    return static_cast<SetMenuIndex>((static_cast<int>(current) + 1) % static_cast<int>(SetMenuIndex::Count));
+    return static_cast<SetMenuOption>((static_cast<int>(current) + 1) % static_cast<int>(SetMenuOption::Count));
 }
 
 void handleSetMenu(bool nav, bool sel)
@@ -210,11 +218,11 @@ void handleSetMenu(bool nav, bool sel)
 
     // Interactions
     if (nav)
-        currentMenuItem = nextMenuIndex(currentMenuItem);
+        currentSetMenuOption = nextMenuIndex(currentSetMenuOption);
         
-    switch (currentMenuItem)
+    switch (currentSetMenuOption)
     {
-        case SetMenuIndex::Hour:
+        case SetMenuOption::Hour:
         {
             lcd.setCursor(0, 0);
             // Add 1 hour
@@ -226,7 +234,7 @@ void handleSetMenu(bool nav, bool sel)
             }
             break;
         }
-        case SetMenuIndex::Minute:
+        case SetMenuOption::Minute:
         {
             lcd.setCursor(4, 0);
             // Add 1 minute. For normal operation, may be better for this to be set to 5.
@@ -238,7 +246,7 @@ void handleSetMenu(bool nav, bool sel)
             }
             break;
         }
-        case SetMenuIndex::Back:
+        case SetMenuOption::Back:
         {
             lcd.setCursor(8, 0);
             if (sel)
@@ -248,7 +256,7 @@ void handleSetMenu(bool nav, bool sel)
             }
             break;
         }
-        case SetMenuIndex::Set:
+        case SetMenuOption::Set:
         {
             lcd.setCursor(13, 0);
             if (sel)
@@ -258,12 +266,56 @@ void handleSetMenu(bool nav, bool sel)
             }
             break;
         }
-        case SetMenuIndex::Count:
+        case SetMenuOption::Count:
         {
             Serial.write("Control reached invalid switch case.");
             break;
         }
     }
+}
+
+// Adapted from Tinkercad example code
+int readUltrasonicDistanceCm(int triggerPin, int echoPin)
+{
+  pinMode(triggerPin, OUTPUT);  // Clear the trigger
+  digitalWrite(triggerPin, LOW);
+  delayMicroseconds(2);
+  // Sets the trigger pin to HIGH state for 10 microseconds
+  digitalWrite(triggerPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(triggerPin, LOW);
+  pinMode(echoPin, INPUT);
+  // Reads the echo pin, and returns the sound wave travel time in microseconds
+  return pulseIn(echoPin, HIGH, 30000) * 0.01723;
+}
+
+// NOTE: Needs to be reworked if reversing capabilities are added.
+void drivingLoop()
+{
+    int dist = readUltrasonicDistanceCm(pin::distTrig, pin::distEcho);
+    if (dist < DANGER_DIST)
+    {
+        // Turn right
+        digitalWrite(pin::motorLeftForward, HIGH);
+        digitalWrite(pin::motorLeftReverse, LOW);
+        digitalWrite(pin::motorRightForward, LOW);
+        digitalWrite(pin::motorRightReverse, HIGH);
+    }
+    else
+    {
+        // Drive forward
+        digitalWrite(pin::motorLeftForward, HIGH);
+        digitalWrite(pin::motorLeftReverse, LOW);
+        digitalWrite(pin::motorRightForward, HIGH);
+        digitalWrite(pin::motorRightReverse, LOW);
+    }
+}
+
+void setAlarm(unsigned long duration)
+{
+    alarmSetTime = millis();
+    alarmDuration = duration;
+    updateMode(Mode::AlarmSet);
 }
 
 void updateMode(Mode newMode)
@@ -277,7 +329,18 @@ void updateMode(Mode newMode)
         lcd.noCursor();
     if (currentMode == Mode::AlarmSet)
         alarmSetTime = 0;
-    
+    if (newMode == Mode::AlarmActive)
+    {
+        digitalWrite(pin::buzzer, HIGH);
+    }
+    if (currentMode == Mode::AlarmActive)
+    {
+        digitalWrite(pin::buzzer, LOW);
+        digitalWrite(pin::motorLeftForward, LOW);
+        digitalWrite(pin::motorLeftReverse, LOW);
+        digitalWrite(pin::motorRightForward, LOW);
+        digitalWrite(pin::motorRightReverse, LOW);
+    }
     systemUpdate = true;
     currentMode = newMode;
 }
